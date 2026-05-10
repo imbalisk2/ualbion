@@ -92,7 +92,7 @@ public class LogicalMap3D : LogicalMap
     public (byte, Wall) GetWall(int index)
     {
         byte tileIndex = _mapData.GetWall(index);
-        var tile = tileIndex > 0 && tileIndex < _labyrinth.Walls.Count
+        var tile = tileIndex > 0 && tileIndex <= _labyrinth.Walls.Count
             ? _labyrinth.Walls[tileIndex - 1]
             : null;
         return (tileIndex, tile);
