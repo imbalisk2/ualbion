@@ -12,6 +12,7 @@ using UAlbion.Formats;
 using UAlbion.Game.Assets;
 using UAlbion.Game.Events;
 using UAlbion.Game.Text;
+using UAlbion.Tools.AgentBridge;
 
 // args for testing isometric map export: -b Base Unpacked -t "Labyrinth Map" -id "Labyrinth.Jirinaar Map.Jirinaar"
 // args for full asset export: -b Base Unpacked
@@ -84,6 +85,13 @@ static class Program
 
         if (commandLine.NeedsEngine)
             BuildEngine(commandLine, exchange);
+
+if (commandLine.AgentMode)
+        {
+            exchange.Attach(new AgentBridgeComponent(!commandLine.AgentHeadless));
+            var agentModeComponent = new AdHocComponent("AgentMode", x => x.OnQuery<IsAgentModeEvent, bool>(_ => true));
+            exchange.Attach(agentModeComponent);
+        }
 
         exchange.Attach(new StdioConsoleReader()); // TODO: Only add this if running with a console window
 

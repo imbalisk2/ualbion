@@ -18,6 +18,7 @@ using UAlbion.Formats.Ids;
 using UAlbion.Game;
 using UAlbion.Game.Assets;
 using UAlbion.Game.Combat;
+using UAlbion.Game.Magic;
 using UAlbion.Game.Entities;
 using UAlbion.Game.Events;
 using UAlbion.Game.Gui;
@@ -159,6 +160,7 @@ static class Albion
         var gameServices = new Container("Game",
             sceneManager,
             menuManager,
+            new SpriteSamplerSource(),
             new AlbionRenderSystem(sceneManager, menuManager),
             new TextureSource(),
             new VeldridGameFactory(LoadMesh),
@@ -169,7 +171,6 @@ static class Albion
             new SlowClock(),
             new CombatClock(),
             new RandomNumberGenerator(),
-            new SpriteSamplerSource(),
             new VideoManager(),
             new EventChainManager(),
             new Querier(),
@@ -181,6 +182,7 @@ static class Albion
             new LayoutManager(),
             new InventoryScreenManager(),
             new CombatManager(),
+            new OutOfCombatMagicManager(),
             //new DiagWindow()
             //    .Add(new SpriteInstanceDataDebugBehaviour())
             //    .Add(new FormatTextEventBehaviour()),
