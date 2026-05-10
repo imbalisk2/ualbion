@@ -8,6 +8,7 @@ using UAlbion.Formats.ScriptEvents;
 using UAlbion.Game.Events;
 using UAlbion.Game.Settings;
 using UAlbion.Game.State;
+using UAlbion.Game.Text;
 
 namespace UAlbion.Game.Entities.Map2D;
 
@@ -105,6 +106,21 @@ public class PartyCaterpillar : ServiceComponent<IMovement>, IMovement
 
     void Update()
     {
+        var party = TryResolve<IParty>();
+        if (party != null)
+        {
+            foreach (var member in party.WalkOrder)
+            {
+                if (member.Effective.TotalWeight > member.Effective.MaxWeight)
+                {
+                    _direction = Vector2.Zero;
+                    Raise(new SetContextEvent(ContextType.Subject, member.Id));
+                    Raise(new DescriptionTextEvent(Resolve<ITextFormatter>().Format(Base.SystemText.Misc_XIsCarryingTooMuch)));
+                    return;
+                }
+            }
+        }
+
         var detector = Resolve<ICollisionManager>();
         if (Movement2D.Update(_state,
                 _settings,

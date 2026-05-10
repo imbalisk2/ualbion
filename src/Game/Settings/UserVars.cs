@@ -49,6 +49,15 @@ public class UserVars
         public StringVar Albion { get; } = new(Library, "User.Path.ALBION", "ALBION");
         public StringVar Saves { get; } = new(Library, "User.Path.SAVE", "$(ALBION)/SAVES");
     }
+
+    public QolVars Qol { get; } = new();
+    public class QolVars
+    {
+        public IntVar HoverExamine        { get; } = new(Library, "User.Qol.HoverExamine", 1);
+        public IntVar MerchantDirectBuy   { get; } = new(Library, "User.Qol.MerchantDirectBuy", 1);
+        public IntVar MerchantCtrlSell    { get; } = new(Library, "User.Qol.MerchantCtrlSell", 1);
+        public IntVar MerchantAltMultiSell{ get; } = new(Library, "User.Qol.MerchantAltMultiSell", 1);
+    }
 }
 #pragma warning restore CA1724 // Type names should not match namespaces
 #pragma warning restore CA1034 // Nested types should not be visible

@@ -1,5 +1,10 @@
 {
   "0": "Language",
   "1": "Take all",
-  "2": "Sell all"
+  "2": "Sell all",
+  "3": "Hover examine",
+  "4": "Quick merchant buy",
+  "5": "Ctrl-sell",
+  "6": "Alt multi-sell",
+  "7": "Quality of Life"
 }

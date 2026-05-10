@@ -34,6 +34,9 @@
   },
   "World2D": {
     "Escape": "push_scene MainMenu",
+    "F5": "quicksave",
+    "F9": "quickload",
+    "F6": "encounter MonsterGroup.FourWarniak1OneWarniak3",
     "Ctrl+A": "!loadnextmap",
     "Ctrl+X": "!loadprevmap",
     "Ctrl+Q": "debug_flag toggle FastMovement",
@@ -81,48 +84,45 @@
   },
   "World3D": {
     "Escape": "push_scene MainMenu",
+    "F5": "quicksave",
+    "F9": "quickload",
     "Tab": "inv:open Tom",
-    /*"F1": "inv:open_pos 0",
-    "F2": "inv:open_pos 1",
-    "F3": "inv:open_pos 2",
-    "F4": "inv:open_pos 3",
-    "F5": "inv:open_pos 4",
-    "F6": "inv:open_pos 5",*/
-
-    // "Ctrl+A": "!loadnextmap",
-    // "Ctrl+X": "!loadprevmap",
 
     "M": "open_map",
     "T": "wait",
+    "F": "toggle_mlook",
+
+    // Party movement (relative to facing direction)
+    "W":      "+party_move  0 -1",
+    "S":      "+party_move  0  1",
+    "A":      "+party_move -1  0",
+    "D":      "+party_move  1  0",
+
+    "Shift+W": "+party_move  0 -2",
+    "Shift+S": "+party_move  0  2",
+    "Shift+A": "+party_move -2  0",
+    "Shift+D": "+party_move  2  0",
+
+    // Party turning (relative)
+    "Left":  "+party_turn_rel -1",
+    "Right": "+party_turn_rel  1",
+
+    // Legacy camera controls (free-float camera, outside party movement)
+    "Ctrl+W":     "+camera_move  0 -4",
+    "Ctrl+A":     "+camera_move -4  0",
+    "Ctrl+S":     "+camera_move  0  4",
+    "Ctrl+D":     "+camera_move  4  0",
+    "Ctrl+Shift+W": "+camera_move  0 -8",
+    "Ctrl+Shift+A": "+camera_move -8  0",
+    "Ctrl+Shift+S": "+camera_move  0  8",
+    "Ctrl+Shift+D": "+camera_move  8  0",
+    "Up":          "+cam_rotate 0 0.03",
+    "Down":        "+cam_rotate 0 -0.03",
+
+    // Mouse look toggle
     "Ctrl+Shift+M": "set_mouse_mode MouseLook",
     "Ctrl+Shift+N": "set_mouse_mode Normal3D",
 
-    "W": "+camera_move  0 -4",
-    "A": "+camera_move -4  0",
-    "S": "+camera_move  0  4",
-    "D": "+camera_move  4  0",
-
-    "Shift+W": "+camera_move  0 -8",
-    "Shift+A": "+camera_move -8  0",
-    "Shift+S": "+camera_move  0  8",
-    "Shift+D": "+camera_move  8  0",
-
-    "Ctrl+W": "+party_move  0 -1",
-    "Ctrl+A": "+party_move -1  0",
-    "Ctrl+S": "+party_move  0  1",
-    "Ctrl+D": "+party_move  1  0",
-
-    "Ctrl+Shift+W": "+party_move  0 -2",
-    "Ctrl+Shift+S": "+party_move  0  2",
-    "Ctrl+Shift+A": "+party_move -2  0",
-    "Ctrl+Shift+D": "+party_move  2  0",
-
-    "Up": "+cam_rotate 0 0.03",
-    "Down": "+cam_rotate 0 -0.03",
-    "Left": "+cam_rotate 0.03 0",
-    "Right": "+cam_rotate -0.03 0",
-
-    "F": "toggle_mlook",
     "Q": "+cursor_mode examine",
     "E": "+cursor_mode manipulate",
     "R": "+cursor_mode talk",
