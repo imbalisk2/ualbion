@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using UAlbion.Config;
+using UAlbion.Formats;
 using UAlbion.Formats.Assets.Inv;
 using UAlbion.Formats.Assets.Save;
 using UAlbion.Formats.Assets.Sheets;
@@ -16,11 +17,15 @@ public interface IGameState
     int MTicksToday => (int)(48.0 * Time.TimeOfDay.TotalHours);
     DateTime Time { get; }
     IParty Party { get; }
+    ushort PartyX { get; }
+    ushort PartyY { get; }
+    Direction PartyDirection { get; }
     MapId MapId { get; }
     MapId MapIdForNpcs { get; set; } // Set by NpcManagers
     ICharacterSheet GetSheet(SheetId id);
     IPlayer GetPlayerForCombatPosition(int position);
     int? GetCombatPositionForPlayer(PartyMemberId id);
+    void SetCombatPositionForPlayer(PartyMemberId id, int newTileIndex);
     IInventory GetInventory(InventoryId id);
     short GetTicker(TickerId id);
     bool GetSwitch(SwitchId id);

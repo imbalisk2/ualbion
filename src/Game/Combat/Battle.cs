@@ -1,19 +1,27 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using UAlbion.Api.Eventing;
 using UAlbion.Api.Visual;
+using UAlbion.Config;
 using UAlbion.Core.Visual;
+using UAlbion.Formats.Assets;
+using UAlbion.Formats.Assets.Inv;
+using UAlbion.Formats.Assets.Sheets;
 using UAlbion.Formats.Assets.Save;
 using UAlbion.Formats.Ids;
+using UAlbion.Game.Gui;
 using UAlbion.Game.Gui.Combat;
 using UAlbion.Game.Gui.Dialogs;
 using UAlbion.Game.State;
+using UAlbion.Game.Events;
+using UAlbion.Game.Text;
 
 namespace UAlbion.Game.Combat;
 
 /// <summary>
-/// Contains the logical state of a battle
+/// Contains the logical state of a battle.
 /// The top-level combat UI is handled by <see cref="CombatDialog"/>
 /// </summary>
 public class Battle : GameComponent, IReadOnlyBattle
@@ -22,15 +30,38 @@ public class Battle : GameComponent, IReadOnlyBattle
     readonly List<ICombatParticipant> _mobs = [];
     readonly List<ICombatParticipant> _corpses = [];
     readonly ICombatParticipant[] _tiles = new ICombatParticipant[SavedGame.CombatRows * SavedGame.CombatColumns];
+    readonly Dictionary<int, PlannedCombatAction> _plannedActions = new();
+    readonly List<(ItemId Item, int Amount)> _apresItems = [];
+    int _addedExperiencePoints;
+    int _apresGold;
+    int _apresFood;
+    CombatActionType _pendingActionType;
+    SpellId _pendingSpellId;
 
     public IReadOnlyList<ICombatParticipant> Mobs { get; }
-    public event Action Complete;
+    public CombatPlanningState PlanningState { get; private set; } = CombatPlanningState.Planning;
+    public int PendingActorPosition { get; private set; } = -1;
+    public PlannedCombatAction GetPlannedAction(int tileIndex)
+        => _plannedActions.TryGetValue(tileIndex, out var a) ? a : null;
+
+    // Apres combat data (set after battle ends)
+    public int XpShare { get; private set; }
+    public int ApresGold => _apresGold;
+    public int ApresFood => _apresFood;
+    public IReadOnlyList<(ItemId Item, int Amount)> ApresItems => _apresItems;
+
+    public event Action<CombatResult> Complete;
 
     public Battle(MonsterGroupId groupId, SpriteId backgroundId)
     {
-        On<EndCombatEvent>(_ => Complete?.Invoke());
+        // Fires when an external event source (e.g. a map script) ends combat early.
+        // When Battle ends combat internally, it calls Complete directly (see BeginRoundAsync).
+        On<EndCombatEvent>(e => Complete?.Invoke(e.Result));
         OnAsync<BeginCombatRoundEvent>(BeginRoundAsync);
         OnAsync<ObserveCombatEvent>(Observe);
+        On<SelectCombatActionEvent>(OnSelectAction);
+        On<SelectCombatTargetEvent>(OnSelectTarget);
+        On<SpellSelectedEvent>(OnSpellSelected);
 
         _groupId = groupId;
         Mobs = _mobs;
@@ -47,26 +78,646 @@ public class Battle : GameComponent, IReadOnlyBattle
         });
     }
 
-    AlbionTask Observe(ObserveCombatEvent _) =>
+    // Player selected an action from the context menu for a party member.
+    void OnSelectAction(SelectCombatActionEvent e)
+    {
+        if (e.Action is CombatActionType.Attack or CombatActionType.Move)
+        {
+            PlanningState = CombatPlanningState.SelectingTarget;
+            PendingActorPosition = e.ActorPosition;
+            _pendingActionType = e.Action;
+        }
+        else if (e.Action == CombatActionType.CastSpell)
+        {
+            var actor = GetTile(e.ActorPosition);
+            var spells = actor?.Effective?.Magic?.SpellStrengths;
+            if (spells != null && spells.Count > 0)
+            {
+                PlanningState = CombatPlanningState.SelectingSpell;
+                PendingActorPosition = e.ActorPosition;
+                int actorPos = e.ActorPosition;
+                var spellEntries = spells.ToList();
+                Resolve<IDialogManager>().AddDialog(depth => new SelectSpellDialog(
+                    spellEntries,
+                    s => Raise(new SpellSelectedEvent(actorPos, s)),
+                    depth));
+            }
+            else
+            {
+                _plannedActions[e.ActorPosition] = new PlannedCombatAction(CombatActionType.None);
+                PlanningState = CombatPlanningState.Planning;
+                PendingActorPosition = -1;
+            }
+        }
+        else
+        {
+            _plannedActions[e.ActorPosition] = new PlannedCombatAction(e.Action);
+            PlanningState = CombatPlanningState.Planning;
+            PendingActorPosition = -1;
+        }
+    }
+
+    // Player selected a spell from the spell dialog.
+    void OnSpellSelected(SpellSelectedEvent e)
+    {
+        _pendingSpellId = e.SpellId;
+        var spell = Assets.LoadSpell(e.SpellId);
+        if (spell != null && (spell.Targets & (SpellTargets.OneMonster | SpellTargets.RowOfMonsters | SpellTargets.AllMonsters)) != 0)
+        {
+            PlanningState = CombatPlanningState.SelectingTarget;
+            _pendingActionType = CombatActionType.CastSpell;
+        }
+        else
+        {
+            _plannedActions[e.ActorPosition] = new PlannedCombatAction(CombatActionType.CastSpell, -1, e.SpellId);
+            PlanningState = CombatPlanningState.Planning;
+            PendingActorPosition = -1;
+        }
+    }
+
+    // Player clicked a tile while in SelectingTarget mode.
+    void OnSelectTarget(SelectCombatTargetEvent e)
+    {
+        if (PlanningState != CombatPlanningState.SelectingTarget) return;
+        
+        if (!IsValidTarget(PendingActorPosition, e.TargetTileIndex)) return;
+        
+        _plannedActions[PendingActorPosition] = _pendingActionType == CombatActionType.CastSpell
+            ? new PlannedCombatAction(_pendingActionType, e.TargetTileIndex, _pendingSpellId)
+            : new PlannedCombatAction(_pendingActionType, e.TargetTileIndex);
+        PlanningState = CombatPlanningState.Planning;
+        PendingActorPosition = -1;
+    }
+
+    // IReadOnlyBattle implementation — uses the current pending actor and action type.
+    public bool IsValidTarget(int targetTileIndex) => IsValidTarget(PendingActorPosition, targetTileIndex);
+
+    // Speed factor and move cap from original game combat constants.
+    const int MoveSpeedFactor = 30;
+    const int MaxCombatMoves = 3;
+
+    static int GetNrMoves(ICombatParticipant actor) =>
+        Math.Clamp(actor.Effective.Attributes.Speed.Current / MoveSpeedFactor, 1, MaxCombatMoves);
+
+    bool IsAgentMode => RaiseQuery(new IsAgentModeEvent());
+
+    // Move = up to GetNrMoves(actor) tiles via BFS flood-fill through empty cells.
+    // Attack = any occupied enemy tile; range enforcement happens at execution time, not selection time.
+    // DEVIATION: original UI restricts melee selection to close-range tiles, but this is unimplemented —
+    // allowing any enemy tile keeps the fight playable until range-restricted selection is reconstructed.
+    bool IsValidTarget(int actorPos, int targetPos)
+    {
+        if (actorPos < 0 || actorPos >= _tiles.Length) return false;
+
+        if (_pendingActionType == CombatActionType.Move)
+        {
+            if (targetPos < 0 || targetPos >= _tiles.Length) return false;
+            if (_tiles[targetPos] != null) return false;
+            var reachable = GetReachableTiles(actorPos);
+            return reachable.Contains(targetPos);
+        }
+
+        if (_pendingActionType != CombatActionType.Attack) return true;
+
+        if (targetPos < 0 || targetPos >= _tiles.Length) return false;
+        var target = _tiles[targetPos];
+        // Only allow targeting enemy mobs (not friendly party members, not empty tiles)
+        return target != null && target.Effective.Type != CharacterType.Party;
+    }
+
+    // BFS flood-fill to compute all tiles reachable within GetNrMoves steps.
+    HashSet<int> GetReachableTiles(int startPos)
+    {
+        int actorIndex = _mobs.FindIndex(m => m.CombatPosition == startPos);
+        int maxSteps = actorIndex >= 0 ? GetNrMoves(_mobs[actorIndex]) : 1;
+
+        if (actorIndex >= 0)
+            Raise(new LogEvent(LogLevel.Info,
+                $"[MOVE] actor={_mobs[actorIndex].SheetId} pos={startPos} speed={_mobs[actorIndex].Effective.Attributes.Speed.Current} maxSteps={maxSteps}"));
+
+        var reachable = new HashSet<int>();
+        var frontier = new Queue<(int pos, int steps)>();
+        frontier.Enqueue((startPos, 0));
+        reachable.Add(startPos);
+
+        while (frontier.Count > 0)
+        {
+            var (pos, steps) = frontier.Dequeue();
+            if (steps >= maxSteps) continue;
+
+            foreach (var neighbor in GetAdjacentTiles(pos))
+            {
+                if (_tiles[neighbor] == null && !reachable.Contains(neighbor))
+                {
+                    reachable.Add(neighbor);
+                    frontier.Enqueue((neighbor, steps + 1));
+                }
+            }
+        }
+
+        Raise(new LogEvent(LogLevel.Info,
+            $"[MOVE] reachable tiles: {string.Join(", ", reachable)}"));
+
+        // Remove starting position — we want reachable destination tiles, not the origin.
+        reachable.Remove(startPos);
+        return reachable;
+    }
+
+    static IEnumerable<int> GetAdjacentTiles(int pos)
+    {
+        int col = pos % SavedGame.CombatColumns;
+        int row = pos / SavedGame.CombatColumns;
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                if (dx == 0 && dy == 0) continue;
+                int nx = col + dx;
+                int ny = row + dy;
+                if (nx >= 0 && nx < SavedGame.CombatColumns && ny >= 0 && ny < SavedGame.CombatRows)
+                    yield return ny * SavedGame.CombatColumns + nx;
+            }
+        }
+    }
+
+    static bool IsAdjacent(int pos1, int pos2)
+    {
+        int x1 = pos1 % SavedGame.CombatColumns, y1 = pos1 / SavedGame.CombatColumns;
+        int x2 = pos2 % SavedGame.CombatColumns, y2 = pos2 / SavedGame.CombatColumns;
+        return Math.Abs(x1 - x2) <= 1 && Math.Abs(y1 - y2) <= 1;
+    }
+
+AlbionTask Observe(ObserveCombatEvent _) =>
         WithFrozenClock(this, async x =>
         {
+            if (RaiseQuery(new IsAgentModeEvent()))
+                return;
+
             Raise(new CombatDialog.ShowCombatDialogEvent(false));
             var dlg = x.AttachChild(new InvisibleWaitForClickDialog());
             await dlg.Task;
             Raise(new CombatDialog.ShowCombatDialogEvent(true));
         });
 
-    AlbionTask BeginRoundAsync(BeginCombatRoundEvent _) => RaiseA(new CombatUpdateEvent(100)); // TODO
+    // Round execution: build speed-sorted action list, execute in order, then reset planning state.
+    AlbionTask BeginRoundAsync(BeginCombatRoundEvent _) =>
+        WithFrozenClock(this, async x =>
+        {
+            var rng = Resolve<IRandom>();
+
+            // Speed-sorted order descending.
+            var roundOrder = _mobs
+                .Where(p => !p.IsDead)
+                .OrderByDescending(p => p.Effective.Attributes.Speed.Current)
+                .ToList();
+
+            foreach (var actor in roundOrder)
+            {
+                if (actor.IsDead) continue;
+
+                Raise(new LogEvent(LogLevel.Info, $"[ROUND] actor={actor.SheetId} type={actor.Effective.Type} pos={actor.CombatPosition} hp={actor.Effective.Combat.LifePoints.Current}"));
+
+                // Number of actions per round equals the actor's ActionPoints stat.
+                int actions = actor.Effective.Combat.ActionPoints;
+                for (int i = 0; i < actions; i++)
+                {
+                    if (actor.IsDead) break;
+
+                    Raise(new LogEvent(LogLevel.Info, $"  [ACTION] {i+1}/{actions} for {actor.SheetId}"));
+                    if (actor.Effective.Type == CharacterType.Party)
+                        ExecutePartyAction(actor, rng);
+                    else
+                        ExecuteMonsterAction(actor, rng);
+                }
+            }
+
+            _plannedActions.Clear();
+            PlanningState = CombatPlanningState.Planning;
+            PendingActorPosition = -1;
+
+            await RaiseA(new CombatUpdateEvent(10));
+
+            bool anyMonsters = _mobs.Any(p => p.Effective.Type == CharacterType.Monster);
+            bool anyParty    = _mobs.Any(p => p.Effective.Type == CharacterType.Party);
+
+            Raise(new LogEvent(LogLevel.Info,
+                $"[ROUND END] mobs={_mobs.Count} anyMonsters={anyMonsters} anyParty={anyParty} " +
+                string.Join(", ", _mobs.Select(m => $"{m.SheetId}({m.Effective.Type},dead={m.IsDead})"))));
+
+            if (!anyMonsters)
+            {
+                DistributeXp();
+                Raise(new LogEvent(LogLevel.Info, $"[COMBAT END] Victory — XP={XpShare} gold={_apresGold}"));
+                Raise(new CombatDialog.ShowCombatDialogEvent(false));
+                var dlg = x.AttachChild(new ApresCombatDialog(XpShare, _apresGold, _apresFood, _apresItems));
+                await dlg.Task;
+                dlg.Remove();
+                Raise(new LogEvent(LogLevel.Info, "[COMBAT END] Raising EndCombatEvent Victory"));
+                // Use Raise (not Enqueue) so CombatDialog receives it immediately.
+                // Invoke Complete directly because Exchange skips Battle's own On<EndCombatEvent> (sender == Battle).
+                Raise(new EndCombatEvent(CombatResult.Victory));
+                Complete?.Invoke(CombatResult.Victory);
+            }
+            else if (!anyParty)
+            {
+                Raise(new LogEvent(LogLevel.Info, "[COMBAT END] Raising EndCombatEvent PartyKilled"));
+                Raise(new EndCombatEvent(CombatResult.PartyKilled));
+                Complete?.Invoke(CombatResult.PartyKilled);
+            }
+        });
+
+    void ExecutePartyAction(ICombatParticipant actor, IRandom rng)
+    {
+        if (!_plannedActions.TryGetValue(actor.CombatPosition, out var plan))
+            return;
+
+        var tf = Resolve<ITextFormatter>();
+        var actorName = actor.Effective.GetName(ReadVar(V.User.Gameplay.Language));
+
+        switch (plan.ActionType)
+        {
+            case CombatActionType.None:
+                break;
+
+            case CombatActionType.Attack:
+            {
+                var target = plan.TargetTileIndex >= 0 ? GetTile(plan.TargetTileIndex) : null;
+                if (target == null || target.IsDead) break;
+                var targetName = target.Effective.GetName(ReadVar(V.User.Gameplay.Language));
+
+                var rightHand = actor.Effective.Inventory.RightHand;
+                bool hasWeapon = !rightHand.Item.IsNone && rightHand.Item.Type == AssetType.Item;
+                string attackText = hasWeapon
+                    ? $"{actorName} greift {targetName} an."
+                    : $"{actorName} greift {targetName} unbewaffnet an.";
+                Raise(new DescriptionTextEvent(tf.Format(attackText)));
+
+                Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Attack, target.CombatPosition));
+                var dmg = DamageCalculator.CalculateAfflictedDamage(rng, actor.Effective, target.Effective);
+
+                if (dmg.Afflicted <= 0)
+                {
+                    string missText = dmg.RolledDamage <= 0 ? $"{actorName} verfehlt {targetName}!" : $"{actorName} kann {targetName} nicht verletzen!";
+                    Raise(new DescriptionTextEvent(tf.Format(missText)));
+                }
+                else if (dmg.IsCritical)
+                {
+                    Raise(new DescriptionTextEvent(tf.Format($"{actorName} macht einen Volltreffer!")));
+                }
+
+                ApplyDamageAndCleanup(target, dmg.Afflicted);
+                Raise(new CombatDamageFloaterEvent(target.CombatPosition, dmg.Afflicted));
+                Raise(new LogEvent(LogLevel.Info,
+                    $"[DAMAGE] {actor.SheetId}→{target.SheetId}: raw={dmg.RawDamage} prot={dmg.RawProtection} rolled={dmg.RolledDamage} vs {dmg.RolledProtection} = {dmg.Afflicted}{(dmg.IsCritical ? " CRITICAL" : "")}"));
+                break;
+            }
+
+            case CombatActionType.Move:
+            {
+                int newPos = plan.TargetTileIndex;
+                if (newPos < 0 || newPos >= _tiles.Length || _tiles[newPos] != null) break;
+                Raise(new DescriptionTextEvent(tf.Format($"{actorName} bewegt sich.")));
+                Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Move));
+                MoveParticipant(actor, newPos);
+                break;
+            }
+
+            case CombatActionType.Flee:
+            {
+                int row = actor.CombatPosition / SavedGame.CombatColumns;
+                int lastRow = SavedGame.CombatRows - 1;
+                if (row != lastRow) break;
+                Raise(new DescriptionTextEvent(tf.Format($"{actorName} flieht aus dem Kampf!")));
+                Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Flee));
+                _mobs.Remove(actor);
+                if (actor.CombatPosition >= 0)
+                    _tiles[actor.CombatPosition] = null;
+                break;
+            }
+
+            case CombatActionType.CastSpell:
+            {
+                var magic = actor.Effective.Magic;
+                if (magic.SpellStrengths.Count == 0) break;
+
+                SpellId spellId = !plan.SpellId.IsNone ? plan.SpellId : magic.SpellStrengths.FirstOrDefault().Key;
+                var spellData = Assets.LoadSpell(spellId);
+                int strength = magic.SpellStrengths.TryGetValue(spellId, out ushort s) ? s : 5;
+                var spellName = spellData != null ? Assets.LoadStringSafe(spellData.Name) : "Zauber";
+                var effectType = SpellEffectMapping.GetEffectType(spellId);
+
+                if (spellData != null && (spellData.Targets & (SpellTargets.Party | SpellTargets.DeadParty)) != 0)
+                {
+                    Raise(new DescriptionTextEvent(tf.Format($"{actorName} wirkt {spellName}.")));
+                    Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Cast));
+
+                    switch (effectType)
+                    {
+                        case SpellEffectType.HealHP:
+                        {
+                            int amount = strength * 5;
+                            ApplyHealing(actor, amount);
+                            Raise(new LogEvent(LogLevel.Info,
+                                $"[SPELL] {actor.SheetId} cast {spellId}: heal={amount}"));
+                            break;
+                        }
+                        case SpellEffectType.HealAllHP:
+                        {
+                            int amount = strength * 5;
+                            foreach (var p in _mobs.Where(x => !x.IsDead && x.Effective.Type == CharacterType.Party))
+                                ApplyHealing(p, amount);
+                            Raise(new LogEvent(LogLevel.Info,
+                                $"[SPELL] {actor.SheetId} cast {spellId}: heal all={amount}"));
+                            break;
+                        }
+                        case SpellEffectType.Recuperation:
+                        {
+                            int amount = strength * 5;
+                            foreach (var p in _mobs.Where(x => !x.IsDead && x.Effective.Type == CharacterType.Party))
+                            {
+                                ApplyHealing(p, amount);
+                                ApplyConditionCure(p, PlayerConditions.Poisoned);
+                                ApplyConditionCure(p, PlayerConditions.Intoxicated);
+                                ApplyConditionCure(p, PlayerConditions.Ill);
+                            }
+                            Raise(new LogEvent(LogLevel.Info,
+                                $"[SPELL] {actor.SheetId} cast recuperation {spellId}: heal all+condition cure"));
+                            break;
+                        }
+                        case SpellEffectType.Regeneration:
+                        {
+                            int amount = strength * 5;
+                            foreach (var p in _mobs.Where(x => !x.IsDead && x.Effective.Type == CharacterType.Party))
+                            {
+                                ApplyHealing(p, amount);
+                                ApplyConditionCure(p, PlayerConditions.Poisoned);
+                                ApplyConditionCure(p, PlayerConditions.Intoxicated);
+                                ApplyConditionCure(p, PlayerConditions.Ill);
+                                ApplyConditionCure(p, PlayerConditions.Asleep);
+                                ApplyConditionCure(p, PlayerConditions.Paralysed);
+                                ApplyConditionCure(p, PlayerConditions.Blind);
+                                ApplyConditionCure(p, PlayerConditions.Insane);
+                                ApplyConditionCure(p, PlayerConditions.Panicking);
+                                ApplyConditionCure(p, PlayerConditions.Irritated);
+                                ApplyConditionCure(p, PlayerConditions.Exhausted);
+                            }
+                            Raise(new LogEvent(LogLevel.Info,
+                                $"[SPELL] {actor.SheetId} cast regeneration {spellId}: heal all+condition cure"));
+                            break;
+                        }
+                        case SpellEffectType.CureAllConditions:
+                        {
+                            foreach (var p in _mobs.Where(x => x.Effective.Type == CharacterType.Party))
+                            {
+                                ApplyConditionCure(p, PlayerConditions.Poisoned);
+                                ApplyConditionCure(p, PlayerConditions.Intoxicated);
+                                ApplyConditionCure(p, PlayerConditions.Ill);
+                                ApplyConditionCure(p, PlayerConditions.Asleep);
+                                ApplyConditionCure(p, PlayerConditions.Paralysed);
+                                ApplyConditionCure(p, PlayerConditions.Blind);
+                                ApplyConditionCure(p, PlayerConditions.Insane);
+                                ApplyConditionCure(p, PlayerConditions.Panicking);
+                                ApplyConditionCure(p, PlayerConditions.Irritated);
+                                ApplyConditionCure(p, PlayerConditions.Exhausted);
+                            }
+                            Raise(new LogEvent(LogLevel.Info,
+                                $"[SPELL] {actor.SheetId} cast cure all {spellId}"));
+                            break;
+                        }
+                        default:
+                        {
+                            var cured = SpellEffectMapping.GetConditionCured(effectType);
+                            if (cured.HasValue)
+                            {
+                                foreach (var p in _mobs.Where(x => x.Effective.Type == CharacterType.Party))
+                                    ApplyConditionCure(p, cured.Value);
+                                Raise(new LogEvent(LogLevel.Info,
+                                    $"[SPELL] {actor.SheetId} cast cure {cured} {spellId}"));
+                            }
+                            else
+                            {
+                                int amount = strength * 5;
+                                ApplyHealing(actor, amount);
+                                Raise(new LogEvent(LogLevel.Info,
+                                    $"[SPELL] {actor.SheetId} cast fallback heal {spellId}: heal={amount}"));
+                            }
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    var target = plan.TargetTileIndex >= 0 ? GetTile(plan.TargetTileIndex) : null;
+                    if (target == null || target.IsDead) break;
+                    var targetName = target.Effective.GetName(ReadVar(V.User.Gameplay.Language));
+
+                    int damage = strength * 5;
+                    Raise(new DescriptionTextEvent(tf.Format($"{actorName} wirkt {spellName} auf {targetName}.")));
+                    Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Cast, target.CombatPosition));
+                    ApplyDamageAndCleanup(target, damage);
+                    Raise(new CombatDamageFloaterEvent(target.CombatPosition, damage));
+                    Raise(new LogEvent(LogLevel.Info,
+                        $"[SPELL] {actor.SheetId} cast on {target.SheetId}: dmg={damage}"));
+                }
+                break;
+            }
+
+            case CombatActionType.UseMagicItem:
+                break;
+        }
+    }
+
+    void ExecuteMonsterAction(ICombatParticipant actor, IRandom rng)
+    {
+        var tf = Resolve<ITextFormatter>();
+        var actorName = actor.Effective.GetName(ReadVar(V.User.Gameplay.Language));
+
+        Raise(new LogEvent(LogLevel.Info, $"  [MONSTER] {actor.SheetId} at tile {actor.CombatPosition} AP={actor.Effective.Combat.ActionPoints}"));
+        if (ShouldMonsterFlee(actor))
+        {
+            Raise(new LogEvent(LogLevel.Info, $"  [MONSTER] {actor.SheetId} FLEEING (danger>morale)"));
+            Raise(new DescriptionTextEvent(tf.Format($"{actorName} versucht zu fliehen!")));
+            Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Flee));
+            int row = actor.CombatPosition / SavedGame.CombatColumns;
+            if (row == 0)
+            {
+                _mobs.Remove(actor);
+                _tiles[actor.CombatPosition] = null;
+            }
+            else
+            {
+                MoveMonsterToward(actor, actor.CombatPosition % SavedGame.CombatColumns);
+            }
+            return;
+        }
+
+        var target = _mobs
+            .Where(p => !p.IsDead && p.Effective.Type == CharacterType.Party)
+            .OrderBy(p => Math.Abs(p.CombatPosition % SavedGame.CombatColumns - actor.CombatPosition % SavedGame.CombatColumns))
+            .ThenBy(p => p.CombatPosition)
+            .FirstOrDefault();
+
+        Raise(new LogEvent(LogLevel.Info, $"  [MONSTER TARGET] {actor.SheetId} found target: {(target == null ? "none" : target.SheetId.ToString())} at tile {(target == null ? -1 : target.CombatPosition)}"));
+
+        if (target == null) return;
+
+        if (IsInMeleeRange(actor.CombatPosition, target.CombatPosition))
+        {
+            Raise(new LogEvent(LogLevel.Info, $"  [MONSTER ATTACK] {actor.SheetId} → {target.SheetId}"));
+            var targetName = target.Effective.GetName(ReadVar(V.User.Gameplay.Language));
+            Raise(new DescriptionTextEvent(tf.Format($"{actorName} greift {targetName} an.")));
+            Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Attack, target.CombatPosition));
+            var dmg = DamageCalculator.CalculateAfflictedDamage(rng, actor.Effective, target.Effective);
+            ApplyDamageAndCleanup(target, dmg.Afflicted);
+            Raise(new CombatDamageFloaterEvent(target.CombatPosition, dmg.Afflicted));
+            Raise(new LogEvent(LogLevel.Info,
+                $"[DAMAGE] {actor.SheetId}→{target.SheetId}: raw={dmg.RawDamage} prot={dmg.RawProtection} rolled={dmg.RolledDamage} vs {dmg.RolledProtection} = {dmg.Afflicted}{(dmg.IsCritical ? " CRITICAL" : "")}"));
+        }
+        else
+        {
+            MoveMonsterToward(actor, target.CombatPosition);
+        }
+    }
+
+    // DEVIATION: melee range check approximated — exact original tile radius not confirmed.
+    static bool IsInMeleeRange(int actorTile, int targetTile)
+    {
+        int cols = SavedGame.CombatColumns;
+        int dx = Math.Abs(actorTile % cols - targetTile % cols);
+        int dy = Math.Abs(actorTile / cols - targetTile / cols);
+        return dx <= 1 && dy <= 1;
+    }
+
+    // Monster flee decision: compare combined danger level (% casualties + % own HP lost) against morale threshold.
+    bool ShouldMonsterFlee(ICombatParticipant actor)
+    {
+        int courage = actor.Effective.Combat.Morale;
+        if (courage == 0) return false; // 0 = fights to the death
+
+        int total = _mobs.Count(p => p.Effective.Type == CharacterType.Monster);
+        int surviving = _mobs.Count(p => p.Effective.Type == CharacterType.Monster && !p.IsDead);
+        int globalDanger = total > 0 ? 100 - (surviving * 100 / total) : 100;
+        int maxHp = actor.Effective.Combat.LifePoints.Max;
+        int curHp = actor.Effective.Combat.LifePoints.Current;
+        int localDanger = maxHp > 0 ? 100 - (curHp * 100 / maxHp) : 100;
+        int danger = (globalDanger + localDanger) / 2;
+        Raise(new LogEvent(LogLevel.Info, $"  [FLEE] {actor.SheetId}: total={total} surviving={surviving} globalDanger={globalDanger} maxHp={maxHp} curHp={curHp} localDanger={localDanger} danger={danger} courage={courage} flee={danger >= courage}"));
+        return danger >= courage;
+    }
+
+    void MoveMonsterToward(ICombatParticipant actor, int targetTile)
+    {
+        int cols = SavedGame.CombatColumns;
+        int actorRow = actor.CombatPosition / cols;
+        int actorCol = actor.CombatPosition % cols;
+        int targetRow = targetTile / cols;
+        int targetCol = targetTile % cols;
+
+        int newRow = actorRow + Math.Sign(targetRow - actorRow);
+        int newCol = actorCol;
+        if (newRow == actorRow)
+            newCol = actorCol + Math.Sign(targetCol - actorCol);
+
+        int newPos = newRow * cols + newCol;
+        if (newPos >= 0 && newPos < _tiles.Length && _tiles[newPos] == null)
+            MoveParticipant(actor, newPos);
+    }
+
+    void ApplyDamageAndCleanup(ICombatParticipant target, int damage)
+    {
+        Raise(new CombatAnimationEvent(target.CombatPosition, CombatAnimationType.Hit));
+        var oldHp = target.Effective.Combat.LifePoints.Current;
+        target.TakeDamage(damage);
+        var newHp = target.Effective.Combat.LifePoints.Current;
+        Raise(new LogEvent(LogLevel.Info, $"Damage: {damage} | {target.SheetId}: {oldHp} → {newHp}/{target.Effective.Combat.LifePoints.Max}"));
+        if (!target.IsDead) return;
+
+        Raise(new CombatAnimationEvent(target.CombatPosition, CombatAnimationType.Death));
+        _addedExperiencePoints += target.ExperienceReward;
+        CollectLoot(target);
+        _mobs.Remove(target);
+        _corpses.Add(target);
+        if (target.CombatPosition >= 0)
+            _tiles[target.CombatPosition] = null;
+        Raise(new LogEvent(LogLevel.Info, $"Monster killed! XP reward: {_addedExperiencePoints}"));
+    }
+
+    void ApplyHealing(ICombatParticipant target, int amount)
+    {
+        var lp = target.Effective.Combat.LifePoints;
+        int oldHp = lp.Current;
+        target.Heal(amount);
+        int newHp = target.Effective.Combat.LifePoints.Current;
+        Raise(new CombatDamageFloaterEvent(target.CombatPosition, -amount));
+        Raise(new LogEvent(LogLevel.Info,
+            $"[HEAL] {target.SheetId}: {oldHp} → {newHp}/{lp.Max} (+{amount})"));
+    }
+
+    void ApplyConditionCure(ICombatParticipant target, PlayerConditions condition)
+    {
+        var existing = target.Effective.Combat.Conditions;
+        if ((existing & condition) == 0) return;
+        target.ClearCondition(condition);
+        Raise(new LogEvent(LogLevel.Info,
+            $"[CURE] {target.SheetId}: cleared {condition}"));
+    }
+
+    // Collect items/gold/food from dead monsters on kill.
+    void CollectLoot(ICombatParticipant target)
+    {
+        var loot = target.GetLoot();
+        if (loot == null) return;
+
+        _apresGold += loot.Gold?.Amount ?? 0;
+        _apresFood += loot.Rations?.Amount ?? 0;
+
+        foreach (var slot in loot.EnumerateAll())
+        {
+            if (slot.Item.IsNone || slot.Item.Type != AssetType.Item) continue;
+            _apresItems.Add((slot.Item, slot.Amount));
+        }
+    }
+
+    void MoveParticipant(ICombatParticipant participant, int newPos)
+    {
+        int oldPos = participant.CombatPosition;
+        if (oldPos >= 0 && oldPos < _tiles.Length)
+            _tiles[oldPos] = null;
+        _tiles[newPos] = participant;
+        participant.SetCombatPosition(newPos);
+    }
+
+    // Distribute XP equally among surviving party members after combat.
+    void DistributeXp()
+    {
+        var party = Resolve<IParty>();
+        var living = party.StatusBarOrder.Where(m => !m.IsDead).ToList();
+        if (living.Count > 0 && _addedExperiencePoints > 0)
+        {
+            XpShare = _addedExperiencePoints / living.Count;
+            foreach (var member in living)
+                member.AddExperience(XpShare);
+        }
+    }
+
+    protected override void Unsubscribed()
+    {
+        Exchange.Unregister(typeof(IReadOnlyBattle), this);
+    }
 
     protected override void Subscribed()
     {
+        Exchange.Register<IReadOnlyBattle>(this);
+
         if (_mobs.Count > 0)
             return;
 
         foreach (var partyMember in Resolve<IParty>().StatusBarOrder)
         {
+            var pos = partyMember.CombatPosition;
             _mobs.Add(partyMember);
-            _tiles[partyMember.CombatPosition] = partyMember;
+            if (pos >= 0 && pos < _tiles.Length)
+                _tiles[pos] = partyMember;
         }
 
         var group = Assets.LoadMonsterGroup(_groupId);
@@ -92,6 +743,9 @@ public class Battle : GameComponent, IReadOnlyBattle
                 _tiles[monster.CombatPosition] = monster;
             }
         }
+
+        // DEVIATION: Monster stat randomisation (±5%) not implemented —
+        // IEffectiveCharacterSheet is read-only and exposes no setters for attributes/HP.
     }
 
     public ICombatParticipant GetTile(int x, int y)

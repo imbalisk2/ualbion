@@ -1,4 +1,5 @@
-﻿using UAlbion.Formats.Assets.Save;
+﻿using UAlbion.Formats.Assets.Inv;
+using UAlbion.Formats.Assets.Save;
 using UAlbion.Formats.Assets.Sheets;
 using UAlbion.Formats.Ids;
 
@@ -13,4 +14,12 @@ public interface ICombatParticipant
     SpriteId TacticalSpriteId { get; }
     SpriteId CombatSpriteId { get; }
     IEffectiveCharacterSheet Effective { get; }
+    bool IsDead { get; }
+    int ExperienceReward { get; }
+    void TakeDamage(int amount);
+    void Heal(int amount);
+    void ClearCondition(PlayerConditions condition);
+    void SetCombatPosition(int newTileIndex);
+    // Returns monster inventory for Apres loot collection; null for party members.
+    IInventory GetLoot();
 }

@@ -11,4 +11,5 @@ public interface ICombatAttributes
     ushort BaseAttack { get; }
     short BonusAttack { get; }
     PlayerConditions Conditions { get; }
+    byte Morale { get; } // Morale threshold for flee decisions (0 = fights to the death)
 }

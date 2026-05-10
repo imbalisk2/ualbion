@@ -27,6 +27,10 @@ public class CombatAttributes : ICombatAttributes
 
     [DiagEdit(Style = DiagEditStyle.Checkboxes)]
     public PlayerConditions Conditions { get; set; }
+
+    [DiagEdit(Style = DiagEditStyle.NumericInput, Min = 0, Max = 100)]
+    public byte Morale { get; set; } // Morale threshold for flee decisions (0 = fights to the death)
+
     public CombatAttributes DeepClone() => new CombatAttributes().CopyFrom(this);
     public CombatAttributes CopyFrom(CombatAttributes other)
     {
@@ -38,7 +42,12 @@ public class CombatAttributes : ICombatAttributes
         ActionPoints = other.ActionPoints;
         BaseDefense = other.BaseDefense;
         BonusDefense = other.BonusDefense;
+        BaseAttack = other.BaseAttack;
+        BonusAttack = other.BonusAttack;
+        MagicAttack = other.MagicAttack;
+        MagicDefense = other.MagicDefense;
         Conditions = other.Conditions;
+        Morale = other.Morale;
         return this;
     }
 

@@ -23,6 +23,7 @@ public class PartyMember : GameComponent, IPlayer
     {
         On<InventoryChangedEvent>(InventoryChanged);
         On<LearnSpellEvent>(LearnSpell);
+        On<SheetChangedEvent>(e => { if (e.Id == SheetId) UpdateSheet(); });
         On<SetPlayerStatusUiPositionEvent>(e => { if (id == e.Id) StatusBarUiPosition = new Vector2(e.CentreX, e.CentreY); });
 
         Id = id;
@@ -55,7 +56,7 @@ public class PartyMember : GameComponent, IPlayer
             : (float)(elapsed / lerpDuration);
 
         if (Math.Abs(_lerp - oldLerp) > float.Epsilon)
-            Raise(new InventoryChangedEvent(new InventoryId(Id)));
+            Raise(new InventoryChangedEvent(new InventoryId(Id)) { IsRealChange = false });
     }
 
     public PartyMemberId Id { get; }
@@ -68,6 +69,38 @@ public class PartyMember : GameComponent, IPlayer
     public Vector3 GetPosition() => _positionFunc();
     public void SetPositionFunc(Func<Vector3> func) => _positionFunc = func; // TODO: Refactor
     public Vector2 StatusBarUiPosition { get; private set; }
+    public bool IsDead => _base.Combat.LifePoints.Current == 0;
+    public int ExperienceReward => 0;
+
+    public void TakeDamage(int amount)
+    {
+        var lp = _base.Combat.LifePoints;
+        lp.Current = (ushort)Math.Max(0, lp.Current - amount);
+        UpdateSheet();
+    }
+
+    public void Heal(int amount)
+    {
+        var lp = _base.Combat.LifePoints;
+        lp.Current = (ushort)Math.Min(lp.Max, lp.Current + amount);
+        UpdateSheet();
+    }
+
+    public void ClearCondition(PlayerConditions condition)
+    {
+        _base.Combat.Conditions &= ~condition;
+        UpdateSheet();
+    }
+
+    public void AddExperience(int amount)
+    {
+        _base.Combat.ExperiencePoints += amount;
+        UpdateSheet();
+    }
+
+    public void SetCombatPosition(int newTileIndex)
+        => Resolve<IGameState>().SetCombatPositionForPlayer(Id, newTileIndex);
+    public IInventory GetLoot() => null; // Party members don't drop loot.
     public override string ToString() => $"PartyMember {Id}";
 
     void InventoryChanged(InventoryChangedEvent e)
