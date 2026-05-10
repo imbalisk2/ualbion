@@ -21,6 +21,8 @@ public sealed class VisualInventorySlot : UiElement
     readonly Vector2 _size;
 
     int _frameNumber;
+    int _rebuildCount; // Debug: track Rebuild calls for sword-visibility investigation
+    bool _isQueuedForSale;
 
     public VisualInventorySlot(InventorySlotId slotId, IText amountSource, Func<IReadOnlyItemSlot> getSlot)
     {
@@ -98,12 +100,33 @@ public sealed class VisualInventorySlot : UiElement
 
     public bool Hoverable { get => _button.Hoverable; set => _button.Hoverable = value; }
     public bool SuppressNextDoubleClick { get => _button.SuppressNextDoubleClick; set => _button.SuppressNextDoubleClick = value; }
+    public bool IsQueuedForSale
+    {
+        get => _isQueuedForSale;
+        set
+        {
+            _isQueuedForSale = value;
+            // Invert IsPressed to give a raised/highlighted look when queued for sale.
+            if (!_slotId.Slot.IsBodyPart() && !_slotId.Slot.IsSpecial())
+                _button.IsPressed = !value;
+        }
+    }
 
     void Rebuild(in Rectangle extents)
     {
         var slot = _getSlot();
         if (slot == null)
             return;
+
+        // Debug: log first 3 Rebuild calls for body-part slots to diagnose
+        // "sword only visible after clicking empty slot" issue.
+        _rebuildCount++;
+        if (_rebuildCount <= 3 && _slotId.Slot.IsBodyPart())
+        {
+            var itemType = slot.Item.Type;
+            var itemId = slot.Item;
+            Info($"[VisualSlot] Rebuild #{_rebuildCount} slot={_slotId.Slot} item.Type={itemType} item={itemId} amount={slot.Amount}");
+        }
 
         _button.AllowDoubleClick = slot.Amount > 1;
 
