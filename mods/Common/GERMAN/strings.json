@@ -6,5 +6,21 @@
   "4":  "Schnellkauf",
   "5":  "Strg-Verkauf",
   "6":  "Alt-Mehrfachverkauf",
-  "7":  "Spielverbesserungen"
+  "7":  "Spielverbesserungen",
+  "8":  "%s greift %s an.",
+  "9":  "%s greift %s unbewaffnet an.",
+  "10": "%s verfehlt %s!",
+  "11": "%s kann %s nicht verletzen!",
+  "12": "%s macht einen Volltreffer!",
+  "13": "%s bewegt sich.",
+  "14": "%s flieht!",
+  "15": "%s wirkt %s.",
+  "16": "%s wirkt %s auf %s.",
+  "17": "%s versucht zu fliehen!",
+  "18": "%s hat keinen Triifalai-Samen!",
+  "19": "Zauber",
+  "20": "Sieg!",
+  "21": "Erfahrung gewonnen: %s",
+  "22": "Gold gefunden: %s",
+  "23": "Nahrung gefunden: %s"
 }

@@ -6,5 +6,21 @@
   "4": "Achat rapide",
   "5": "Vente Ctrl",
   "6": "Vente Alt multiple",
-  "7": "Qualité de vie"
+  "7": "Qualité de vie",
+  "8":  "%s attaque %s.",
+  "9":  "%s attaque %s à mains nues.",
+  "10": "%s rate %s!",
+  "11": "%s ne peut pas blesser %s!",
+  "12": "%s fait un coup critique!",
+  "13": "%s se déplace.",
+  "14": "%s fuit!",
+  "15": "%s lance %s.",
+  "16": "%s lance %s sur %s.",
+  "17": "%s tente de fuir!",
+  "18": "%s n'a pas de graine de Triifalai!",
+  "19": "Sort",
+  "20": "Victoire!",
+  "21": "Expérience gagnée: %s",
+  "22": "Or trouvé: %s",
+  "23": "Nourriture trouvée: %s"
 }

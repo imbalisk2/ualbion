@@ -45,3 +45,4 @@ mods/Repacked/Albion/*
 mods/Unpacked/Assets/*
 !mods/UATest/
 mods/UATest/Saves/*.json
+mods/UATest/Saves/*.txt

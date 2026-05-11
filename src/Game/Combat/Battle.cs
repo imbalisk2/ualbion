@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using UAlbion.Api.Eventing;
 using UAlbion.Api.Visual;
+using UAlbion.Base;
 using UAlbion.Config;
 using UAlbion.Core.Visual;
 using UAlbion.Formats.Assets;
@@ -347,22 +348,24 @@ AlbionTask Observe(ObserveCombatEvent _) =>
 
                 var rightHand = actor.Effective.Inventory.RightHand;
                 bool hasWeapon = !rightHand.Item.IsNone && rightHand.Item.Type == AssetType.Item;
-                string attackText = hasWeapon
-                    ? $"{actorName} greift {targetName} an."
-                    : $"{actorName} greift {targetName} unbewaffnet an.";
-                Raise(new DescriptionTextEvent(tf.Format(attackText)));
+                var attackText = hasWeapon
+                    ? tf.Format(TextId.From(UAlbionString.CombatMsg_XAttacksY), actorName, targetName)
+                    : tf.Format(TextId.From(UAlbionString.CombatMsg_XAttacksYUnarmed), actorName, targetName);
+                Raise(new DescriptionTextEvent(attackText));
 
                 Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Attack, target.CombatPosition));
                 var dmg = DamageCalculator.CalculateAfflictedDamage(rng, actor.Effective, target.Effective);
 
                 if (dmg.Afflicted <= 0)
                 {
-                    string missText = dmg.RolledDamage <= 0 ? $"{actorName} verfehlt {targetName}!" : $"{actorName} kann {targetName} nicht verletzen!";
-                    Raise(new DescriptionTextEvent(tf.Format(missText)));
+                    var missText = dmg.RolledDamage <= 0
+                        ? tf.Format(TextId.From(UAlbionString.CombatMsg_XMissesY), actorName, targetName)
+                        : tf.Format(TextId.From(UAlbionString.CombatMsg_XCannotHurtY), actorName, targetName);
+                    Raise(new DescriptionTextEvent(missText));
                 }
                 else if (dmg.IsCritical)
                 {
-                    Raise(new DescriptionTextEvent(tf.Format($"{actorName} macht einen Volltreffer!")));
+                    Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XCriticalHit), actorName)));
                 }
 
                 ApplyDamageAndCleanup(target, dmg.Afflicted);
@@ -376,7 +379,7 @@ AlbionTask Observe(ObserveCombatEvent _) =>
             {
                 int newPos = plan.TargetTileIndex;
                 if (newPos < 0 || newPos >= _tiles.Length || _tiles[newPos] != null) break;
-                Raise(new DescriptionTextEvent(tf.Format($"{actorName} bewegt sich.")));
+                Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XMoves), actorName)));
                 Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Move));
                 MoveParticipant(actor, newPos);
                 break;
@@ -387,7 +390,7 @@ AlbionTask Observe(ObserveCombatEvent _) =>
                 int row = actor.CombatPosition / SavedGame.CombatColumns;
                 int lastRow = SavedGame.CombatRows - 1;
                 if (row != lastRow) break;
-                Raise(new DescriptionTextEvent(tf.Format($"{actorName} flieht aus dem Kampf!")));
+                Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XFlees), actorName)));
                 Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Flee));
                 _mobs.Remove(actor);
                 if (actor.CombatPosition >= 0)
@@ -403,12 +406,12 @@ AlbionTask Observe(ObserveCombatEvent _) =>
                 SpellId spellId = !plan.SpellId.IsNone ? plan.SpellId : magic.SpellStrengths.FirstOrDefault().Key;
                 var spellData = Assets.LoadSpell(spellId);
                 int strength = magic.SpellStrengths.TryGetValue(spellId, out ushort s) ? s : 5;
-                var spellName = spellData != null ? Assets.LoadStringSafe(spellData.Name) : "Zauber";
+                var spellName = Assets.LoadStringSafe(spellData?.Name ?? TextId.From(UAlbionString.CombatMsg_UnknownSpell));
                 var effectType = SpellEffectMapping.GetEffectType(spellId);
 
                 if (spellData != null && (spellData.Targets & (SpellTargets.Party | SpellTargets.DeadParty)) != 0)
                 {
-                    Raise(new DescriptionTextEvent(tf.Format($"{actorName} wirkt {spellName}.")));
+                    Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XCastsSpell), actorName, spellName)));
                     Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Cast));
 
                     switch (effectType)
@@ -512,7 +515,7 @@ AlbionTask Observe(ObserveCombatEvent _) =>
                     var targetName = target.Effective.GetName(ReadVar(V.User.Gameplay.Language));
 
                     int damage = strength * 5;
-                    Raise(new DescriptionTextEvent(tf.Format($"{actorName} wirkt {spellName} auf {targetName}.")));
+                    Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XCastsSpellOnY), actorName, spellName, targetName)));
                     Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Cast, target.CombatPosition));
                     ApplyDamageAndCleanup(target, damage);
                     Raise(new CombatDamageFloaterEvent(target.CombatPosition, damage));
@@ -536,7 +539,7 @@ AlbionTask Observe(ObserveCombatEvent _) =>
         if (ShouldMonsterFlee(actor))
         {
             Raise(new LogEvent(LogLevel.Info, $"  [MONSTER] {actor.SheetId} FLEEING (danger>morale)"));
-            Raise(new DescriptionTextEvent(tf.Format($"{actorName} versucht zu fliehen!")));
+            Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XTriesToFlee), actorName)));
             Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Flee));
             int row = actor.CombatPosition / SavedGame.CombatColumns;
             if (row == 0)
@@ -565,7 +568,7 @@ AlbionTask Observe(ObserveCombatEvent _) =>
         {
             Raise(new LogEvent(LogLevel.Info, $"  [MONSTER ATTACK] {actor.SheetId} → {target.SheetId}"));
             var targetName = target.Effective.GetName(ReadVar(V.User.Gameplay.Language));
-            Raise(new DescriptionTextEvent(tf.Format($"{actorName} greift {targetName} an.")));
+            Raise(new DescriptionTextEvent(tf.Format(TextId.From(UAlbionString.CombatMsg_XAttacksY), actorName, targetName)));
             Raise(new CombatAnimationEvent(actor.CombatPosition, CombatAnimationType.Attack, target.CombatPosition));
             var dmg = DamageCalculator.CalculateAfflictedDamage(rng, actor.Effective, target.Effective);
             ApplyDamageAndCleanup(target, dmg.Afflicted);

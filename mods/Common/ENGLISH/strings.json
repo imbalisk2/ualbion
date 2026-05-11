@@ -6,5 +6,21 @@
   "4": "Quick merchant buy",
   "5": "Ctrl-sell",
   "6": "Alt multi-sell",
-  "7": "Quality of Life"
+  "7": "Quality of Life",
+  "8":  "%s attacks %s.",
+  "9":  "%s attacks %s unarmed.",
+  "10": "%s misses %s!",
+  "11": "%s cannot hurt %s!",
+  "12": "%s makes a critical hit!",
+  "13": "%s moves.",
+  "14": "%s flees!",
+  "15": "%s casts %s.",
+  "16": "%s casts %s on %s.",
+  "17": "%s tries to flee!",
+  "18": "%s has no Triifalai seed!",
+  "19": "Spell",
+  "20": "Victory!",
+  "21": "Experience gained: %s",
+  "22": "Gold found: %s",
+  "23": "Food found: %s"
 }

@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Text;
 using UAlbion.Api.Eventing;
+using UAlbion.Base;
 using UAlbion.Core;
+using UAlbion.Formats;
 using UAlbion.Formats.Ids;
 using UAlbion.Game.Events;
 using UAlbion.Game.Gui.Controls;
@@ -50,19 +52,29 @@ public class ApresCombatDialog : ModalDialog
         }
 
         var tf = Resolve<ITextFormatter>();
+        var assets = Resolve<IAssetManager>();
         var sb = new StringBuilder();
 
-        // DEVIATION: SystemText IDs for combat victory message not confirmed — hardcoded strings used as placeholder.
-        sb.AppendLine("Victory!");
+        // DEVIATION: SystemText IDs for post-combat screen not confirmed in original game.
+        sb.AppendLine(assets.LoadStringSafe(TextId.From(UAlbionString.CombatMsg_Victory)));
 
         if (_xpShare > 0)
-            sb.AppendLine($"Experience gained: {_xpShare}");
+        {
+            var fmt = assets.LoadStringSafe(TextId.From(UAlbionString.CombatMsg_XpGained));
+            sb.AppendLine(fmt.Replace("%s", _xpShare.ToString()));
+        }
 
         if (_apresGold > 0)
-            sb.AppendLine($"Gold found: {_apresGold}");
+        {
+            var fmt = assets.LoadStringSafe(TextId.From(UAlbionString.CombatMsg_GoldFound));
+            sb.AppendLine(fmt.Replace("%s", _apresGold.ToString()));
+        }
 
         if (_apresFood > 0)
-            sb.AppendLine($"Food found: {_apresFood}");
+        {
+            var fmt = assets.LoadStringSafe(TextId.From(UAlbionString.CombatMsg_FoodFound));
+            sb.AppendLine(fmt.Replace("%s", _apresFood.ToString()));
+        }
 
         // DEVIATION: item names not localised here; full item distribution UI not implemented.
         foreach (var (itemId, amount) in _apresItems)
