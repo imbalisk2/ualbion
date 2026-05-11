@@ -28,7 +28,7 @@ using UAlbion.Game.Combat;
 using UAlbion.Game.Events;
 using UAlbion.Game.Events.Inventory;
 
-namespace UAlbion.Tools.AgentBridge;
+namespace UAlbion;
 
 /// <summary>
 /// Embedded WebSocket server that lets an external agent observe and control the game.

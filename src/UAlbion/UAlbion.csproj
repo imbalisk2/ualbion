@@ -29,7 +29,6 @@
     <ProjectReference Include="..\Formats\UAlbion.Formats.csproj" />
     <ProjectReference Include="..\Game.Veldrid\UAlbion.Game.Veldrid.csproj" />
     <ProjectReference Include="..\Game\UAlbion.Game.csproj" />
-    <ProjectReference Include="..\Tools\AgentBridge\UAlbion.Tools.AgentBridge.csproj" />
   </ItemGroup>
 
 </Project>

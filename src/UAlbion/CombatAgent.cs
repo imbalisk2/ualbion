@@ -6,7 +6,7 @@ using UAlbion.Formats.Assets.Save;
 using UAlbion.Game.Combat;
 using UAlbion.Game.State;
 
-namespace UAlbion.Tools.AgentBridge;
+namespace UAlbion;
 
 public class CombatAgentStrategy
 {

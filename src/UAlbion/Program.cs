@@ -12,8 +12,6 @@ using UAlbion.Formats;
 using UAlbion.Game.Assets;
 using UAlbion.Game.Events;
 using UAlbion.Game.Text;
-using UAlbion.Tools.AgentBridge;
-
 // args for testing isometric map export: -b Base Unpacked -t "Labyrinth Map" -id "Labyrinth.Jirinaar Map.Jirinaar"
 // args for full asset export: -b Base Unpacked
 // args for re-pack of exported assets: -b Unpacked Repacked
